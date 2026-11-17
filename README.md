@@ -1,0 +1,79 @@
+# Texture Rebake：旧模型贴图 → 新模型 UV
+
+通用 Blender 插件：`texture_rebake.py`，版本 **1.1.2**。适用于剪切、减面、重新编辑 UV 后，将原模型一套纹理转移到新模型。最低声明版本 Blender 4.2，实际在 Blender 5.1.0 / Cycles CPU 验证，无需额外 Python 包。
+
+## 安装和更新
+
+Blender → 编辑 → 偏好设置 → 插件 → 右上角菜单 → **从磁盘安装 / Install from Disk**，选择本目录的 `texture_rebake.py`，启用 **Texture Rebake / 旧贴图转新 UV**。更新前保存当前工作，重新安装后重启 Blender。若安装界面不能直接覆盖，先移除旧版，再安装。
+
+也可在 Blender 文本编辑器打开脚本并运行，临时注册至当前会话。已安装同名插件时请使用上述更新方式，避免重复注册。
+
+## 使用
+
+1. 自行导入原模型和编辑后的新模型，使两者在世界空间重合，不要为便于观察而把它们移开。
+2. 3D 视图按 **N** → **Rebake**，分别选择原模型、新模型及对应 UV 层。UV 留空时使用第一个 UV 层。
+3. 指定 BaseColor 及需要转移的 Normal、AO、Roughness、Metallic 图像。每项数据图单独选择读取通道。
+4. 选择输入与输出法线格式，默认 DirectX (-Y)，也可选择 OpenGL (+Y)。PNG 本身无法可靠判断约定，需要按原素材选择。
+5. 设置输出目录、文件名前缀、分辨率、扩边和射线距离，点击 **烘焙到新 UV**。
+
+| 输入项 | 可选通道 | 缺失时行为 |
+| --- | --- | --- |
+| BaseColor | R / G / B / A / RGB | 必填；RGB 保留颜色，单通道变为灰度颜色 |
+| Normal | 完整 RGB | 仅烘焙原模型几何法线 |
+| AO | R / G / B / A / RGB | **1，全白** |
+| Roughness | R / G / B / A / RGB | 面板默认值，初始 0.5 |
+| Metallic | R / G / B / A / RGB | 使用“缺失 Metallic 默认值”，可设置 0–1，初始为 **0，全非金属** |
+
+AO / Roughness / Metallic 最终各占输出 ORM 的一个通道；选择 **RGB** 时，读取全部颜色并通过 Blender RGB to BW 节点按亮度转灰度，不是简单平均。灰度图的 RGB 三通道相同，选 RGB 或任一颜色通道结果相同。法线三个分量共同表示方向，始终完整读取 RGB。
+
+不设置独立的输入 ORM 栏。如果原图已打包，只需在多个输入项选择同一个文件，再各自指定所需通道。例如同一张 RMA 图：AO 选 B、Roughness 选 R、Metallic 选 G。
+
+BaseColor 按 sRGB 读取，Normal、AO、Roughness、Metallic 按 Non-Color 读取。同一个文件同时用于颜色和数据时会创建独立输入图像，不会互相改变颜色空间。不自动计算几何 AO。
+
+## 输出
+
+每次在指定输出目录新建 `前缀_时间戳/`，保留以往结果。
+
+| 文件 | 内容 / 颜色空间 |
+| --- | --- |
+| `*_BaseColor.png` | 无灯光颜色，sRGB；不保留源图透明度 |
+| `*_Normal.png` | 新 UV 切线空间法线，Non-Color；支持 UV 岛旋转及 DirectX / OpenGL 输出 |
+| `*_ORM.png` | 固定 **R=AO、G=Roughness、B=Metallic**，Non-Color |
+| `*_Coverage.png` | 无扩边的原表面命中图，白色=命中；UV 外黑色 |
+| `report.json` | 输入路径与通道、UV、法线格式、投射设置、覆盖率、未命中像素及预览状态 |
+
+1.1.2 起所有输出均明确保存为 **每通道 8 位 PNG**。BaseColor 仅进行正确的线性 → sRGB 编码，不应用 AgX、Filmic、曝光、对比度或 Gamma 调色；法线和 ORM 直接保存数据值。旧版浮点烘焙图直接保存时，Blender 会选择 16 位 PNG，UE 的高位深导入处理可能造成颜色解释与原始 8 位 Diffuse 不同，即便 sRGB 勾选相同。新版本统一输出位深以避免该差异。
+
+UE 中 BaseColor 应开启 sRGB，压缩采用 Default；Normal 和 ORM 关闭 sRGB。若旧结果已经作为 16 位 PNG 导入，请将修正后的 8 位文件重新导入到同一纹理资产。单纯更新 Blender 插件不会改变 UE 里已经导入的数据。不应通过额外压暗颜色或随意调整 Gamma 来抵消导入问题。
+
+重新烘焙与改 UV 会改变像素位置和采样密度，插值、分辨率与纹理压缩可能引入局部差异，因此不是整张文件逐像素相同；目标是保持同一表面的原有颜色与明度。
+
+默认创建独立网格和材质的预览副本，隐藏原、新模型的视口及渲染显示；不改它们的网格、UV 或材质。取消“创建预览副本”可保持原场景可见性。预览连接 BaseColor / Normal / Roughness / Metallic，AO 保存在 ORM 的 R 中，不乘入 BaseColor。
+
+## 已有结果恢复与中文界面修复
+
+已修复中文界面开启“翻译新建数据名称”后，生成预览时报 `'NoneType' object has no attribute 'inputs'` 的问题。节点改为显式创建，不依赖默认英文名称。中文环境已加入回归测试。
+
+旧版报此错误时，贴图可能已成功输出。选择原、新模型，点击 **从结果文件夹创建预览（不重烘焙）**，选择含 `report.json` 的时间戳文件夹。工具读取报告中的 UV 和法线格式，使用现有 PNG 创建预览，不修改输出文件。目标名称须与报告一致，且应保持烘焙时的网格和 UV；兼容旧版报告。
+
+如果预览阶段出现其他错误，贴图烘焙成功状态仍会保留，并在报告中单独记录预览失败和警告。
+
+## 投射设置与限制
+
+默认外扩 0.01、最大射线距离 0.05，单位为 Blender 世界空间单位，须按模型尺寸调整。最大距离 0 表示不限距离，可能投射到背面。先确认模型对齐，再调整参数。烘焙期间界面可能暂时无响应，系统控制台显示当前通道；大图占用较多内存，可先低分辨率确认。
+
+使用独立临时场景、求值后的网格副本和 Cycles Selected-to-Active 烘焙，修改器会参与烘焙。不覆盖输入纹理、FBX 或 blend，也不自动保存当前场景。
+
+一对源/目标对象共用一套输入纹理，显式贴图覆盖原模型所有材质槽；不解析复杂材质图或自动拆分多套材质。不支持 UDIM、多对象批次或自定义 cage。新 UV 必须处于单张 0–1 区间，应避免重叠；插件检查范围和完全退化 UV，不自动修复岛重叠。
+
+完全投射未命中会报错；部分未命中保留输出并警告。对照 UV 检查 Coverage 中的黑色区域。裁掉的旧面不妨碍其余区域；新增封口或远离原表面的区域无法恢复原图。未命中位置：颜色黑，法线中性，ORM 为 AO=1，Roughness 和 Metallic 均使用各自设定的默认值。扩边不能修复错误投射或所有内部缺口。
+
+Unreal 导入时，Normal 使用 Normalmap 压缩；ORM 关闭 sRGB，采用 Masks 压缩，R/G/B 分别连接 AO/Roughness/Metallic。
+
+## 验证
+
+```shell
+blender --background --factory-startup --python-exit-code 1 --python tests/test_texture_rebake.py
+```
+
+测试覆盖缺失值、各独立图的 R/G/B/A/RGB 选择、RGB 转灰度、BaseColor 单通道、不对称图案在旋转 UV 后的位置、切线法线和格式转换、sRGB 往返、覆盖检查、场景清理、中文预览、旧结果预览恢复及预览失败状态。测试输出在忽略版本管理的 `test_output/` 内。
