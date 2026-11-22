@@ -178,6 +178,58 @@ for color, values, name in ((True,linear,'encoding_sweep_srgb'),(False,ramp,'enc
     addon.save_png8(im, OUT/(name+'.png'), color=color)
     bpy.data.images.remove(im)
 cases += ['sRGB and non-color reference sweeps independent of scene exposure']
+# Preview geometry and bake share world-space extrusion, without scene data.
+for obj in (s.source, s.target): obj.hide_set(False)
+s.preview = False; s.extrusion = .2; s.ray_distance = 1
+s.target.scale = (2, 3, 1); s.target.location = (4, 5, 0)
+s.source.scale = s.target.scale; s.source.location = (4, 5, .1)
+bpy.context.view_layer.update()
+original_coords = [v.co.copy() for v in s.target.data.vertices]
+def counts():
+    return tuple(len(collection) for collection in (bpy.data.scenes,bpy.data.objects,bpy.data.meshes,bpy.data.materials))
+unchanged = counts()
+for shown in (True, False, True):
+    s.show_cage = shown
+    coords, edges, triangles = addon.cage_geometry(bpy.context, s)
+    assert np.allclose(coords[0], (4,5,.2))
+    assert len(edges) == 4 and len(triangles) == 2
+    assert counts() == unchanged
+assert all(a.co == b for a,b in zip(s.target.data.vertices,original_coords))
+s.extrusion = .3
+coords, _, _ = addon.cage_geometry(bpy.context, s)
+assert np.allclose(coords[0], (4,5,.3))
+# Evaluated modifiers must appear in the overlay without leaking meshes.
+modifier = s.target.modifiers.new('preview_subdivision','SUBSURF'); modifier.levels = 1
+bpy.context.view_layer.update()
+coords, _, _ = addon.cage_geometry(bpy.context,s)
+assert len(coords) > len(s.target.data.vertices) and counts() == unchanged
+s.target.modifiers.remove(modifier); bpy.context.view_layer.update()
+s.extrusion = .2
+report = addon.bake_textures(bpy.context,s,coverage_only=True)
+assert report['coverage_percent'] == 100 and report['cage'] == 'AUTO'
+assert set(report['files']) == {'Coverage','Misses'} and counts() == unchanged
+s.show_cage = False
+hidden_report = addon.bake_textures(bpy.context,s,coverage_only=True)
+assert hidden_report['coverage_percent'] == report['coverage_percent']
+report = addon.bake_textures(bpy.context,s)
+assert report['coverage_percent'] == 100 and counts() == unchanged
+assert np.allclose(sample(report,'ORM'), [1,.65,.35], atol=.008)
+assert np.allclose(sample(report,'Normal'), [.5,.5,1], atol=.008)
+original_input = s.basecolor; s.basecolor = '/missing/source.png'
+report = addon.bake_textures(bpy.context,s,coverage_only=True)
+assert report['coverage_percent'] == 100
+s.basecolor = original_input
+# A cage below the source must miss; moving the slider controls actual rays.
+s.extrusion = .01
+try:
+    addon.bake_textures(bpy.context,s,coverage_only=True)
+    raise AssertionError('Cage below source should miss')
+except ValueError as exc:
+    assert '所有投射' in str(exc), str(exc)
+assert counts() == unchanged and bpy.context.scene == scene
+cases += ['overlay has no scene datablocks', 'world-space extrusion updates',
+          'evaluated modifiers in preview', 'auto cage full bake and cleanup',
+          'display toggle independent of bake', 'extrusion controls actual hits']
 addon.unregister(); addon.register(); addon.unregister()
 cases += ['register/unregister']
 (OUT/'test_results.json').write_text(json.dumps({'status':'passed','cases':cases},indent=2),encoding='utf-8')
