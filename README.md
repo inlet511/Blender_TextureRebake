@@ -2,9 +2,18 @@
 
 通用 Blender 插件：`texture_rebake.py`，版本 **1.3.0**。适用于剪切、减面、重新编辑 UV 后，将原模型一套纹理转移到新模型。最低声明版本 Blender 4.2，实际在 Blender 5.1.0 / Cycles CPU 验证，无需额外 Python 包。
 
+**打包兼容性记录（2026-11-23）**：本次仅调整分发方式，烘焙源码保持原样。Blender 5.3.0 的 ZIP 安装、启用、禁用和卸载测试通过；但现有完整功能回归在 BaseColor sRGB 往返用例失败，输入约 `(0.2, 0.4, 0.6)` 得到约 `(0.486, 0.667, 0.796)`，输出偏亮。Blender 5.3 的烘焙兼容性尚未通过，请勿将“安装成功”视为完整功能验证。
+
 ## 安装和更新
 
-Blender → 编辑 → 偏好设置 → 插件 → 右上角菜单 → **从磁盘安装 / Install from Disk**，选择本目录的 `texture_rebake.py`，启用 **Texture Rebake / 旧贴图转新 UV**。更新前保存当前工作，重新安装后重启 Blender。若安装界面不能直接覆盖，先移除旧版，再安装。
+1. 下载发布包 **`TextureRebake-1.3.0.zip`**，无需解压。
+2. Blender → 编辑 → 偏好设置 → 插件 → 右上角菜单 → **从磁盘安装 / Install from Disk**，选择该 ZIP。
+3. 搜索 `Texture Rebake`，启用 **Texture Rebake / 旧贴图转新 UV**。
+4. 回到 3D 视图，按 **N** → **Rebake** 开始使用。
+
+这是标准目录式 Blender 插件包（Legacy Add-on），通过“插件 → 从磁盘安装”安装，不通过在线扩展仓库安装。ZIP 内含 `texture_rebake/__init__.py`、本使用说明和更新记录；不包含测试结果、缓存或工程素材。NumPy 使用 Blender 自带版本，无需 pip 安装。
+
+更新前保存当前工作。若已安装单文件版 `texture_rebake.py`，先在插件设置中移除旧版，再安装 ZIP 并重启 Blender，避免同名模块冲突。后续 ZIP 更新也建议先移除旧版再安装。卸载时禁用插件并在其设置中选择移除；已经输出的贴图保留在用户选择的输出目录中。
 
 也可在 Blender 文本编辑器打开脚本并运行，临时注册至当前会话。已安装同名插件时请使用上述更新方式，避免重复注册。
 
@@ -85,6 +94,12 @@ UV 内红色表示射线没有击中源模型，通常会造成黑块。需检�
 Unreal 导入时，Normal 使用 Normalmap 压缩；ORM 关闭 sRGB，采用 Masks 压缩，R/G/B 分别连接 AO/Roughness/Metallic。
 
 ## 验证
+
+### 生成发布包
+
+在本目录运行 `python build_release.py`，自动读取源码中的版本号，在 `dist/` 生成安装 ZIP 和 SHA-256 校验文件。采用文件白名单打包，同一份源码与文档重复构建可得到相同的 ZIP。开发仍编辑 `texture_rebake.py`，打包时将其映射为插件入口 `texture_rebake/__init__.py`，无需维护两份代码。
+
+### 功能测试
 
 ```shell
 blender --background --factory-startup --python-exit-code 1 --python tests/test_texture_rebake.py
