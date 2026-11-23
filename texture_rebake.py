@@ -1,7 +1,7 @@
 """Texture Rebake: explicit image inputs, isolated Cycles selected-to-active baking."""
 bl_info = {
     'name': 'Texture Rebake / 旧贴图转新 UV', 'author': 'Ken / Codex',
-    'version': (1, 3, 0), 'blender': (4, 2, 0),
+    'version': (1, 3, 1), 'blender': (4, 2, 0),
     'location': 'View3D > Sidebar > Rebake', 'category': 'Material',
     'description': 'Bake source textures to an edited mesh; tangent normals and ORM',
 }
@@ -428,7 +428,10 @@ def bake_textures(context, settings, progress=None, coverage_only=False):
             else:
                 dst.data.materials.clear(); dst.data.materials.append(target_mat); node = slot
             im = bpy.data.images.new('_TR_' + label, width=size, height=size, alpha=True, float_buffer=True)
-            loaded.append(im); im.colorspace_settings.name = 'sRGB' if kind == 'BASECOLOR' else 'Non-Color'
+            # Bake into raw scene-linear values. An sRGB bake target can already
+            # receive encoded values, including with a float buffer in Blender 5.3;
+            # save_png8 must be the only stage applying the sRGB transfer curve.
+            loaded.append(im); im.colorspace_settings.name = 'Non-Color'
             im.generated_color = background
             node.image = im
             src.select_set(selected, view_layer=layer); dst.select_set(True, view_layer=layer)

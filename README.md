@@ -1,12 +1,12 @@
 # Texture Rebake：旧模型贴图 → 新模型 UV
 
-通用 Blender 插件：`texture_rebake.py`，版本 **1.3.0**。适用于剪切、减面、重新编辑 UV 后，将原模型一套纹理转移到新模型。最低声明版本 Blender 4.2，实际在 Blender 5.1.0 / Cycles CPU 验证，无需额外 Python 包。
+通用 Blender 插件：`texture_rebake.py`，版本 **1.3.1**。适用于剪切、减面、重新编辑 UV 后，将原模型一套纹理转移到新模型。最低声明版本 Blender 4.2，当前版本在 Blender 5.3.0 / Cycles CPU 验证，无需额外 Python 包。
 
-**打包兼容性记录（2026-11-23）**：本次仅调整分发方式，烘焙源码保持原样。Blender 5.3.0 的 ZIP 安装、启用、禁用和卸载测试通过；但现有完整功能回归在 BaseColor sRGB 往返用例失败，输入约 `(0.2, 0.4, 0.6)` 得到约 `(0.486, 0.667, 0.796)`，输出偏亮。Blender 5.3 的烘焙兼容性尚未通过，请勿将“安装成功”视为完整功能验证。
+**1.3.1 颜色修复**：修复 Blender 5.3 中 BaseColor 重复 sRGB 编码导致的烘焙偏亮。中间烘焙图统一存储线性数值，仅在导出 BaseColor 时编码一次。完整回归及 0–255 全灰阶、旋转 UV、Standard / AgX、曝光 / Gamma 独立性检查通过；PNG 实际像素与参考值误差不超过 1 个 8 位码值。4.2 为最低声明版本，本次未重新验证该版本。
 
 ## 安装和更新
 
-1. 下载发布包 **`TextureRebake-1.3.0.zip`**，无需解压。
+1. 下载发布包 **`TextureRebake-1.3.1.zip`**，无需解压。
 2. Blender → 编辑 → 偏好设置 → 插件 → 右上角菜单 → **从磁盘安装 / Install from Disk**，选择该 ZIP。
 3. 搜索 `Texture Rebake`，启用 **Texture Rebake / 旧贴图转新 UV**。
 4. 回到 3D 视图，按 **N** → **Rebake** 开始使用。
@@ -57,6 +57,8 @@ BaseColor 按 sRGB 读取，Normal、AO、Roughness、Metallic 按 Non-Color 读
 UE 中 BaseColor 应开启 sRGB，压缩采用 Default；Normal 和 ORM 关闭 sRGB。若旧结果已经作为 16 位 PNG 导入，请将修正后的 8 位文件重新导入到同一纹理资产。单纯更新 Blender 插件不会改变 UE 里已经导入的数据。不应通过额外压暗颜色或随意调整 Gamma 来抵消导入问题。
 
 重新烘焙与改 UV 会改变像素位置和采样密度，插值、分辨率与纹理压缩可能引入局部差异，因此不是整张文件逐像素相同；目标是保持同一表面的原有颜色与明度。
+
+若此前导出的 BaseColor 已经偏亮，请升级到 1.3.1 后重新烘焙，并在 UE 中重新导入输出贴图；从旧结果文件夹恢复预览不会修正已写入文件的颜色。
 
 默认创建独立网格和材质的预览副本，隐藏原、新模型的视口及渲染显示；不改它们的网格、UV 或材质。取消“创建预览副本”可保持原场景可见性。预览连接 BaseColor / Normal / Roughness / Metallic，AO 保存在 ORM 的 R 中，不乘入 BaseColor。
 

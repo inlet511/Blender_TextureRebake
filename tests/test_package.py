@@ -4,6 +4,7 @@ Set BLENDER_USER_SCRIPTS and BLENDER_USER_CONFIG inside test_output/package_inst
 before starting Blender with --background --factory-startup --python-exit-code 1.
 """
 import hashlib
+import ast
 from pathlib import Path
 
 import addon_utils
@@ -14,9 +15,11 @@ ROOT = Path(__file__).resolve().parents[1]
 TEST_ROOT = (ROOT / 'test_output' / 'package_install').resolve()
 scripts = Path(bpy.utils.user_resource('SCRIPTS')).resolve()
 assert scripts.is_relative_to(TEST_ROOT), f'Refusing to use real Blender profile: {scripts}'
-archives = list((ROOT / 'dist').glob('TextureRebake-*.zip'))
-assert len(archives) == 1, 'Keep exactly one release ZIP for this test'
-archive = archives[0]
+tree = ast.parse((ROOT / 'texture_rebake.py').read_bytes())
+info = next(ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == 'bl_info' for t in n.targets))
+version = '.'.join(map(str, info['version']))
+archive = ROOT / 'dist' / f'TextureRebake-{version}.zip'
 assert bpy.ops.preferences.addon_install(filepath=str(archive)) == {'FINISHED'}
 module = addon_utils.enable('texture_rebake', default_set=True)
 assert module is not None

@@ -15,6 +15,49 @@ OUT.mkdir(exist_ok=True)
 bpy.ops.wm.read_factory_settings(use_empty=True)
 
 
+def png_chunk(kind, data):
+    return struct.pack('>I', len(data))+kind+data+struct.pack('>I', zlib.crc32(kind+data))
+
+
+def read_png8_rgb(path):
+    """Read actual PNG codes independently of Blender's image/color management."""
+    data = Path(path).read_bytes()
+    assert data[:8] == b'\x89PNG\r\n\x1a\n'
+    offset = 8; compressed = bytearray()
+    while offset < len(data):
+        length = struct.unpack_from('>I', data, offset)[0]
+        kind = data[offset+4:offset+8]; chunk = data[offset+8:offset+8+length]
+        if kind == b'IHDR':
+            width, height, depth, color_type, compression, filtering, interlace = struct.unpack('>IIBBBBB', chunk)
+            assert depth == 8 and color_type in (2, 6) and interlace == 0
+        elif kind == b'IDAT': compressed.extend(chunk)
+        offset += length+12
+    channels = 3 if color_type == 2 else 4
+    stride = width*channels
+    raw = zlib.decompress(compressed)
+    result = np.empty((height, stride), dtype=np.uint8)
+    previous = bytearray(stride)
+    for y in range(height):
+        start = y*(stride+1); filter_type = raw[start]
+        row = bytearray(raw[start+1:start+1+stride])
+        for i in range(stride):
+            left = row[i-channels] if i >= channels else 0
+            up = previous[i]; upper_left = previous[i-channels] if i >= channels else 0
+            if filter_type == 0: predictor = 0
+            elif filter_type == 1: predictor = left
+            elif filter_type == 2: predictor = up
+            elif filter_type == 3: predictor = (left+up)//2
+            elif filter_type == 4:
+                p = left+up-upper_left
+                distances = (abs(p-left), abs(p-up), abs(p-upper_left))
+                predictor = (left, up, upper_left)[distances.index(min(distances))]
+            else: raise AssertionError(f'Unknown PNG filter {filter_type}')
+            row[i] = (row[i]+predictor) & 255
+        result[y] = np.frombuffer(row, dtype=np.uint8)
+        previous = row
+    return result.reshape(height, width, channels)[:, :, :3]
+
+
 def image(name, rgba):
     # Independent straight RGBA PNG fixture: Blender's float image saver may
     # unpremultiply synthetic alpha, which would change the intended channel values.
@@ -65,6 +108,29 @@ assert bpy.context.scene == scene and scene.render.engine == 'BLENDER_EEVEE'
 assert s.target.data == original_mesh and list(s.target.data.materials) == original_materials
 assert before == (len(bpy.data.scenes),len(bpy.data.objects),len(bpy.data.meshes),len(bpy.data.materials))
 cases = ['missing AO/metal defaults', 'rotated tangent normal DirectX', 'sRGB roundtrip', 'scene isolation', 'explicit 8-bit PNG output']
+# Independent 8-bit source ramp, baked through rotated UVs under different
+# display settings. Compare PNG bytes, not Blender's interpretation on reload.
+ramp_path = OUT/'source_ramp.png'
+row = b''.join(bytes((v, v, v)) for v in range(256))
+ramp_path.write_bytes(b'\x89PNG\r\n\x1a\n'
+    + png_chunk(b'IHDR', struct.pack('>IIBBBBB', 256, 256, 8, 2, 0, 0, 0))
+    + png_chunk(b'IDAT', zlib.compress((b'\x00'+row)*256)) + png_chunk(b'IEND', b''))
+original_input = s.basecolor
+original_view = scene.view_settings.view_transform
+for view, exposure, gamma in (('Standard', 0, 1), ('AgX', 4, 1.8)):
+    scene.view_settings.view_transform = view
+    scene.view_settings.exposure = exposure; scene.view_settings.gamma = gamma
+    s.basecolor = str(ramp_path)
+    ramp_report = addon.bake_textures(bpy.context, s)
+    actual = read_png8_rgb(ramp_report['files']['BaseColor']).astype(int)
+    # PNG rows run top-to-bottom; destination V equals source U after rotation.
+    expected = np.broadcast_to(np.arange(255, -1, -1)[:, None, None], actual.shape)
+    assert np.abs(actual-expected).max() <= 1, (view, np.abs(actual-expected).max())
+s.basecolor = original_input
+scene.view_settings.view_transform = original_view
+scene.view_settings.exposure = 0; scene.view_settings.gamma = 1
+cases += ['all 256 sRGB codes through Cycles and rotated UVs',
+          'bake PNG bytes independent of Standard/AgX, exposure and gamma']
 # Asymmetric color quadrants independently check source UV -> rotated destination UV.
 im = bpy.data.images.new('quadrants', width=64, height=64, float_buffer=True)
 im.colorspace_settings.name = 'Non-Color'
@@ -177,6 +243,9 @@ for color, values, name in ((True,linear,'encoding_sweep_srgb'),(False,ramp,'enc
     im.pixels.foreach_set(buffer.ravel())
     addon.save_png8(im, OUT/(name+'.png'), color=color)
     bpy.data.images.remove(im)
+    codes = read_png8_rgb(OUT/(name+'.png'))
+    expected = np.broadcast_to(np.arange(256)[None, :, None], codes.shape)
+    assert np.abs(codes.astype(int)-expected).max() <= 1, name
 cases += ['sRGB and non-color reference sweeps independent of scene exposure']
 # Preview geometry and bake share world-space extrusion, without scene data.
 for obj in (s.source, s.target): obj.hide_set(False)
