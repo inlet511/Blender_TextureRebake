@@ -1,31 +1,12 @@
-# Texture Rebake 1.3.1
+# Texture Rebake 1.4.0
 
-修复 Blender 5.3 中 BaseColor 烘焙过亮的问题。
+各贴图输入支持下拉搜索当前 Blender 项目的静态图像，点击旁边的文件夹按钮也可加载外部贴图。
 
-## 修复内容
+- 支持项目内打包、生成图像和未保存的绘制像素。
+- 烘焙使用独立缓冲，不改变项目原图的颜色空间、Alpha 模式或像素；同一图可用于不同输入通道。
+- 兼容旧版项目中保存的文件路径；清空图像选择恢复缺图默认值，BaseColor 仍为必填。
+- 保留 1.3.1 的颜色修复、Cage 预览和投射诊断。
 
-原先 sRGB 烘焙目标中的像素已经过颜色编码，导出时又编码了一次，造成输出偏亮。现在中间烘焙图统一保存线性数值，仅在导出 BaseColor 时进行一次 sRGB 编码。Normal、ORM 和诊断图保留数据值，输出仍为每通道 8 位 PNG。
+下载 `TextureRebake-1.4.0.zip`，无需解压，在 Blender 插件设置中“从磁盘安装”。附有同名 `.zip.sha256` 校验文件。
 
-## 下载与安装
-
-下载本 Release 附件中的 **TextureRebake-1.3.1.zip**，无需解压。
-Blender → 编辑 → 偏好设置 → 插件 → 从磁盘安装，选择 ZIP 并启用 Texture Rebake。
-3D 视图按 N → Rebake。
-
-请使用上述安装附件；GitHub 自动生成的 Source code 压缩包是开发源码，不是插件安装包。
-更新前保存工作，先移除旧插件，再安装 ZIP 并重启 Blender。
-
-此前已导出且偏亮的 BaseColor 需要重新烘焙；在 UE 中重新导入新贴图。从旧结果文件夹恢复预览不会修复旧贴图。
-
-## 兼容性与验证
-
-- Blender 5.3.0 / Cycles CPU 完整功能回归通过，覆盖法线、ORM、预览、Cage、投射诊断及场景清理。
-- 使用独立 PNG 解码检查实际文件像素，0–255 全灰阶通过 Cycles 和旋转 UV 后误差不超过 1 个 8 位码值。
-- 验证 Standard / AgX、场景曝光和 Gamma 不影响导出颜色。
-- 最低声明 Blender 4.2，本次未重新测试旧版本。
-- 不需额外安装 Python 依赖，使用 Blender 自带 NumPy。
-
-## 发布附件
-
-- `TextureRebake-1.3.1.zip`
-- `TextureRebake-1.3.1.zip.sha256`
+Blender 5.3.0 / Cycles CPU 完整回归通过，包括打包图像丢失磁盘源文件、共享图像颜色/数据隔离、未保存绘制、浮点精度、外部加载及既有颜色/法线/ORM 测试。最低声明 Blender 4.2，本次未重新验证旧版本。

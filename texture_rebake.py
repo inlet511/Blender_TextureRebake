@@ -1,7 +1,7 @@
 """Texture Rebake: explicit image inputs, isolated Cycles selected-to-active baking."""
 bl_info = {
     'name': 'Texture Rebake / 旧贴图转新 UV', 'author': 'Ken / Codex',
-    'version': (1, 3, 1), 'blender': (4, 2, 0),
+    'version': (1, 4, 0), 'blender': (4, 2, 0),
     'location': 'View3D > Sidebar > Rebake', 'category': 'Material',
     'description': 'Bake source textures to an edited mesh; tangent normals and ORM',
 }
@@ -25,6 +25,61 @@ NORMALS = [('DIRECTX', 'DirectX (-Y / Unreal)', ''), ('OPENGL', 'OpenGL (+Y / Bl
 
 def mesh_poll(self, obj):
     return obj.type == 'MESH'
+
+
+def texture_poll(self, image):
+    return image.type in {'IMAGE', 'UV_TEST'} and image.source in {'FILE', 'GENERATED'}
+
+
+def image_selected(key):
+    def update(self, context):
+        # Clearing the dropdown must also clear any legacy path fallback.
+        setattr(self, key, '')
+    return update
+
+
+def has_input(settings, key):
+    return bool(getattr(settings, key + '_image') or getattr(settings, key))
+
+
+def input_description(settings, key):
+    image = getattr(settings, key + '_image')
+    if image: return 'blend://' + image.name
+    path = getattr(settings, key)
+    return bpy.path.abspath(path) if path else None
+
+
+def load_input(settings, key):
+    """Private bake buffer; never change a project's image or its color space."""
+    original = getattr(settings, key + '_image')
+    if original:
+        if not texture_poll(None, original):
+            raise ValueError(f'{key}: 仅支持单张静态图像（不支持 UDIM、序列或影片）')
+        data = pixels(original)
+        width, height = original.size
+        if not width or not height or not len(data):
+            raise ValueError(f'{key}: 项目图像无法读取像素: {original.name}')
+        # Image.copy() does not copy unsaved paint/generated pixel changes.
+        image = bpy.data.images.new('_TR_Input_' + key, width=width, height=height,
+                                    alpha=True, float_buffer=original.is_float)
+        try:
+            image.colorspace_settings.name = 'sRGB' if key == 'basecolor' else 'Non-Color'
+            image.alpha_mode = 'CHANNEL_PACKED'
+            image.pixels.foreach_set(data.ravel()); image.update()
+        except Exception:
+            bpy.data.images.remove(image)
+            raise
+        return image
+    image = bpy.data.images.load(bpy.path.abspath(getattr(settings, key)), check_existing=False)
+    try:
+        if not texture_poll(None, image):
+            raise ValueError(f'{key}: 仅支持单张静态图像')
+        image.colorspace_settings.name = 'sRGB' if key == 'basecolor' else 'Non-Color'
+        image.alpha_mode = 'CHANNEL_PACKED'
+    except Exception:
+        bpy.data.images.remove(image)
+        raise
+    return image
 
 
 _overlay_handle = None
@@ -116,6 +171,11 @@ class TR_Settings(bpy.types.PropertyGroup):
     roughness: StringProperty(name='Roughness', subtype='FILE_PATH')
     ao: StringProperty(name='AO（空=白）', subtype='FILE_PATH')
     metallic: StringProperty(name='Metallic', subtype='FILE_PATH')
+    basecolor_image: PointerProperty(name='BaseColor', type=bpy.types.Image, poll=texture_poll, update=image_selected('basecolor'))
+    normal_image: PointerProperty(name='Normal', type=bpy.types.Image, poll=texture_poll, update=image_selected('normal'))
+    roughness_image: PointerProperty(name='Roughness', type=bpy.types.Image, poll=texture_poll, update=image_selected('roughness'))
+    ao_image: PointerProperty(name='AO（空=白）', type=bpy.types.Image, poll=texture_poll, update=image_selected('ao'))
+    metallic_image: PointerProperty(name='Metallic', type=bpy.types.Image, poll=texture_poll, update=image_selected('metallic'))
     basecolor_channel: EnumProperty(name='BaseColor 通道', items=CHANNELS, default='RGB')
     ao_channel: EnumProperty(name='AO 通道', items=CHANNELS, default='RGB')
     rough_channel: EnumProperty(name='粗糙度通道', items=CHANNELS, default='RGB')
@@ -168,9 +228,16 @@ def validate(settings, coverage_only=False):
                        - uv[p.loop_indices[(i+1) % p.loop_total], 0] * uv[p.loop_indices[i], 1]
                        for i in range(p.loop_total))) > 1e-12 for p in dst.data.polygons):
         raise ValueError('新模型 UV 面积为零')
-    if not coverage_only and not settings.basecolor:
+    if not coverage_only and not has_input(settings, 'basecolor'):
         raise ValueError('请指定 BaseColor 贴图')
     for key in (() if coverage_only else TEXTURE_KEYS):
+        image = getattr(settings, key + '_image')
+        if image:
+            if not texture_poll(None, image):
+                raise ValueError(f'{key}: 仅支持单张静态图像（不支持 UDIM、序列或影片）')
+            if not all(image.size):
+                raise ValueError(f'{key}: 项目图像无法读取: {image.name}')
+            continue
         path = getattr(settings, key)
         if path and not Path(bpy.path.abspath(path)).is_file():
             raise ValueError(f'{key}: 文件不存在: {path}')
@@ -368,8 +435,7 @@ def bake_textures(context, settings, progress=None, coverage_only=False):
               'extrusion': settings.extrusion, 'ray_distance': settings.ray_distance,
               'use_cage': True, 'cage': 'AUTO',
               'coverage_only': coverage_only,
-              'inputs': {k: bpy.path.abspath(getattr(settings, k)) if getattr(settings, k) else None
-                         for k in TEXTURE_KEYS},
+              'inputs': {k: input_description(settings, k) for k in TEXTURE_KEYS},
               'input_channels': {'basecolor': settings.basecolor_channel, 'normal': 'RGB',
                                  'ao': settings.ao_channel, 'roughness': settings.rough_channel,
                                  'metallic': settings.metal_channel},
@@ -379,12 +445,9 @@ def bake_textures(context, settings, progress=None, coverage_only=False):
     try:
         images = {}
         for key in (() if coverage_only else TEXTURE_KEYS):
-            if getattr(settings, key):
-                im = bpy.data.images.load(bpy.path.abspath(getattr(settings, key)), check_existing=False)
+            if has_input(settings, key):
+                im = load_input(settings, key)
                 loaded.append(im); images[key] = im
-                im.colorspace_settings.name = 'sRGB' if key == 'basecolor' else 'Non-Color'
-                # Read RGB and A independently, including packed data textures.
-                im.alpha_mode = 'CHANNEL_PACKED'
         scene = bpy.data.scenes.new('_TextureRebake')
         scene.render.engine = 'CYCLES'; scene.cycles.device = 'CPU'
         scene.cycles.samples = 1; scene.cycles.use_denoising = False
@@ -472,7 +535,7 @@ def bake_textures(context, settings, progress=None, coverage_only=False):
         save_png8(uv_mask, miss_path)
         report['files']['Misses'] = str(miss_path)
         if misses == count: raise ValueError('所有投射均未命中，请检查模型世界坐标是否重合；详见 Misses 图')
-        if not settings.normal and not coverage_only:
+        if not has_input(settings, 'normal') and not coverage_only:
             report['warnings'].append('未提供法线贴图：仅烘焙原模型几何法线')
         for kind, label, bg in (() if coverage_only else (
             ('BASECOLOR', 'BaseColor', (0,0,0,1)),
@@ -517,6 +580,38 @@ def bake_textures(context, settings, progress=None, coverage_only=False):
         report['preview_status'] = 'disabled'
     (run / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
     return report
+
+
+class TR_OT_load_image(bpy.types.Operator):
+    bl_idname = 'texture_rebake.load_image'; bl_label = '加载外部贴图'
+    bl_description = '从磁盘加载图像并用于此贴图输入；也可直接从下拉列表选择项目内图像'
+    bl_options = {'REGISTER', 'UNDO'}
+    key: EnumProperty(items=[(k, k, '') for k in TEXTURE_KEYS])
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default='*.png;*.jpg;*.jpeg;*.tga;*.tif;*.tiff;*.exr;*.hdr;*.bmp;*.webp', options={'HIDDEN'})
+    scene_name: StringProperty(options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        self.scene_name = context.scene.name
+        s = context.scene.texture_rebake
+        image = getattr(s, self.key + '_image')
+        self.filepath = bpy.path.abspath(image.filepath, library=image.library) if image and image.filepath else bpy.path.abspath(getattr(s, self.key))
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        image = None
+        try:
+            scene = bpy.data.scenes.get(self.scene_name) if self.scene_name else context.scene
+            if scene is None: raise ValueError('原场景已不存在，请重新选择贴图')
+            # A fresh image preserves other materials' image settings and edits.
+            image = bpy.data.images.load(bpy.path.abspath(self.filepath), check_existing=False)
+            if not texture_poll(None, image): raise ValueError('仅支持单张静态图像')
+            setattr(scene.texture_rebake, self.key + '_image', image)
+            return {'FINISHED'}
+        except Exception as exc:
+            if image is not None and image.users == 0: bpy.data.images.remove(image)
+            self.report({'ERROR'}, str(exc)); return {'CANCELLED'}
 
 
 class TR_OT_bake(bpy.types.Operator):
@@ -583,7 +678,9 @@ class TR_PT_panel(bpy.types.Panel):
         box = layout.box(); box.label(text='原模型纹理 / 读取通道')
         for key, channel in (('basecolor','basecolor_channel'), ('normal',None),
                              ('ao','ao_channel'), ('roughness','rough_channel'), ('metallic','metal_channel')):
-            row = box.row(align=True); row.prop(s, key)
+            row = box.row(align=True)
+            row.prop(s, key + '_image')
+            row.operator('texture_rebake.load_image', text='', icon='FILE_FOLDER').key = key
             if channel: row.prop(s, channel, text='')
             else: row.label(text='RGB')
         box.prop(s, 'rough_default')
@@ -604,7 +701,7 @@ class TR_PT_panel(bpy.types.Panel):
         if s.last_output: layout.label(text='已输出至：' + s.last_output)
 
 
-CLASSES = (TR_Settings, TR_OT_bake, TR_OT_coverage, TR_OT_preview, TR_PT_panel)
+CLASSES = (TR_Settings, TR_OT_load_image, TR_OT_bake, TR_OT_coverage, TR_OT_preview, TR_PT_panel)
 
 
 def register():

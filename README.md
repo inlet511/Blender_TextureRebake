@@ -1,12 +1,12 @@
 # Texture Rebake：旧模型贴图 → 新模型 UV
 
-通用 Blender 插件：`texture_rebake.py`，版本 **1.3.1**。适用于剪切、减面、重新编辑 UV 后，将原模型一套纹理转移到新模型。最低声明版本 Blender 4.2，当前版本在 Blender 5.3.0 / Cycles CPU 验证，无需额外 Python 包。
+通用 Blender 插件：`texture_rebake.py`，版本 **1.4.0**。适用于剪切、减面、重新编辑 UV 后，将原模型一套纹理转移到新模型。最低声明版本 Blender 4.2，当前版本在 Blender 5.3.0 / Cycles CPU 验证，无需额外 Python 包。
 
 **1.3.1 颜色修复**：修复 Blender 5.3 中 BaseColor 重复 sRGB 编码导致的烘焙偏亮。中间烘焙图统一存储线性数值，仅在导出 BaseColor 时编码一次。完整回归及 0–255 全灰阶、旋转 UV、Standard / AgX、曝光 / Gamma 独立性检查通过；PNG 实际像素与参考值误差不超过 1 个 8 位码值。4.2 为最低声明版本，本次未重新验证该版本。
 
 ## 安装和更新
 
-1. 下载发布包 **`TextureRebake-1.3.1.zip`**，无需解压。
+1. 下载发布包 **`TextureRebake-1.4.0.zip`**，无需解压。
 2. Blender → 编辑 → 偏好设置 → 插件 → 右上角菜单 → **从磁盘安装 / Install from Disk**，选择该 ZIP。
 3. 搜索 `Texture Rebake`，启用 **Texture Rebake / 旧贴图转新 UV**。
 4. 回到 3D 视图，按 **N** → **Rebake** 开始使用。
@@ -21,7 +21,7 @@
 
 1. 自行导入原模型和编辑后的新模型，使两者在世界空间重合，不要为便于观察而把它们移开。
 2. 3D 视图按 **N** → **Rebake**，分别选择原模型、新模型及对应 UV 层。UV 留空时使用第一个 UV 层。
-3. 指定 BaseColor 及需要转移的 Normal、AO、Roughness、Metallic 图像。每项数据图单独选择读取通道。
+3. 在 BaseColor、Normal、AO、Roughness、Metallic 各项的图像下拉列表中选择当前 `.blend` 项目内已加载的贴图，支持搜索；也可点击旁边的文件夹按钮加载外部贴图。每项数据图单独选择读取通道。
 4. 选择输入与输出法线格式，默认 DirectX (-Y)，也可选择 OpenGL (+Y)。PNG 本身无法可靠判断约定，需要按原素材选择。
 5. 设置输出目录、文件名前缀、分辨率、扩边和射线距离，点击 **烘焙到新 UV**。
 
@@ -38,6 +38,10 @@ AO / Roughness / Metallic 最终各占输出 ORM 的一个通道；选择 **RGB*
 不设置独立的输入 ORM 栏。如果原图已打包，只需在多个输入项选择同一个文件，再各自指定所需通道。例如同一张 RMA 图：AO 选 B、Roughness 选 R、Metallic 选 G。
 
 BaseColor 按 sRGB 读取，Normal、AO、Roughness、Metallic 按 Non-Color 读取。同一个文件同时用于颜色和数据时会创建独立输入图像，不会互相改变颜色空间。不自动计算几何 AO。
+
+**项目内贴图（1.4.0）**：下拉列表包含当前 `.blend` 的静态图像数据块，包括打包图像和生成图像；不扫描磁盘上的项目文件夹。外部文件加载后也会进入此列表。烘焙读取图像当前像素，包含未保存的绘制修改；打包图像无需原始磁盘文件仍然存在。工具使用独立烘焙缓冲，不改变项目图像的像素、颜色空间或 Alpha 模式。同一图像可同时用于不同输入。点击输入框的 × 清空该项后使用缺图默认值；BaseColor 仍为必填。不支持 UDIM、序列、影片和 Render Result。
+
+旧版 `.blend` 已保存的文件路径继续兼容读取；界面只提供图像下拉选择和外部加载按钮。选择项目图像或加载外部图像后会替换原路径。报告中项目图像以 `blend://图像名称` 记录。
 
 ## 输出
 

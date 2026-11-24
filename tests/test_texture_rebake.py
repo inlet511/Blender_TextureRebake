@@ -299,6 +299,58 @@ assert counts() == unchanged and bpy.context.scene == scene
 cases += ['overlay has no scene datablocks', 'world-space extrusion updates',
           'evaluated modifiers in preview', 'auto cage full bake and cleanup',
           'display toggle independent of bake', 'extrusion controls actual hits']
+# Project dropdown: packed and dirty buffers are used directly, without touching originals.
+s.extrusion = .2
+packed_project = bpy.data.images.load(image('project_packed', [.2,.4,.6,.8]),check_existing=False)
+packed_project.pack(); packed_project.filepath = '/no/longer/on/disk.png'
+packed_project.colorspace_settings.name = 'sRGB'
+project_before = addon.pixels(packed_project).copy()
+alpha_before = packed_project.alpha_mode
+s.basecolor_image = packed_project
+assert not s.basecolor
+s.roughness_image = packed_project; s.rough_channel = 'G'
+s.metallic_image = packed_project; s.metal_channel = 'A'
+image_count = len(bpy.data.images)
+report = addon.bake_textures(bpy.context,s)
+assert report['inputs']['basecolor'] == 'blend://' + packed_project.name
+assert np.allclose(sample(report,'BaseColor'), [.2,.4,.6], atol=.008)
+assert np.allclose(sample(report,'ORM'), [1,.4,.8], atol=.008)
+assert packed_project.colorspace_settings.name == 'sRGB' and packed_project.alpha_mode == alpha_before
+assert np.array_equal(addon.pixels(packed_project), project_before)
+assert len(bpy.data.images) == image_count + 3  # only the three exported result images remain
+# Unsaved generated image pixels, including paint edits, must survive isolation.
+generated = bpy.data.images.new('unsaved_project_texture',width=16,height=16,float_buffer=False)
+generated.colorspace_settings.name = 'sRGB'
+paint = np.tile([.7,.3,.1,1],(256,1)).astype(np.float32)
+generated.pixels.foreach_set(paint.ravel()); generated.update()
+s.basecolor_image = generated
+report = addon.bake_textures(bpy.context,s)
+assert np.allclose(sample(report,'BaseColor'), [.7,.3,.1],atol=.008)
+assert np.allclose(addon.pixels(generated),paint,atol=.004)
+# Float data remains float (no byte quantization), and normal input is recognized.
+floating = bpy.data.images.new('unsaved_float',width=8,height=8,float_buffer=True)
+floating.colorspace_settings.name = 'Non-Color'
+floating.pixels.foreach_set(np.tile([.12345,.5,1,1],(64,1)).astype(np.float32).ravel())
+s.ao_image = floating; s.ao_channel = 'R'
+s.normal_image = floating
+copy = addon.load_input(s,'ao')
+assert copy.is_float and np.isclose(addon.pixels(copy)[0,0],.12345,atol=1e-6)
+bpy.data.images.remove(copy)
+# Clearing a project image restores optional fallback, never a stale legacy path.
+for key in addon.TEXTURE_KEYS: setattr(s,key+'_image',None)
+assert not addon.has_input(s,'basecolor') and not addon.has_input(s,'normal')
+try:
+    addon.validate(s)
+    raise AssertionError('BaseColor must still be required')
+except ValueError as exc: assert 'BaseColor' in str(exc)
+external_path = image('external_picker', [.25,.5,.75,1])
+assert bpy.ops.texture_rebake.load_image(key='basecolor',filepath=external_path) == {'FINISHED'}
+assert s.basecolor_image and not s.basecolor
+report = addon.bake_textures(bpy.context,s)
+assert np.allclose(sample(report,'BaseColor'), [.25,.5,.75],atol=.008)
+cases += ['project dropdown packed images with missing files', 'shared project image color/data isolation',
+          'unsaved generated paint pixels', 'float input precision', 'cleared image fallback',
+          'external image loader and bake']
 addon.unregister(); addon.register(); addon.unregister()
 cases += ['register/unregister']
 (OUT/'test_results.json').write_text(json.dumps({'status':'passed','cases':cases},indent=2),encoding='utf-8')
